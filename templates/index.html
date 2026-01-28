@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Website Crawler - Sitemap Generator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🕷️ Website Crawler</h1>
+            <p>Generate sitemaps by crawling websites efficiently</p>
+        </header>
+
+        <div class="crawl-form">
+            <div class="form-group">
+                <label for="url">Website URL</label>
+                <input type="url" id="url" placeholder="https://example.com" required>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="max_depth">Max Depth</label>
+                    <input type="number" id="max_depth" value="3" min="1" max="10">
+                    <small>How deep to crawl (1-10)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="max_urls">Max URLs</label>
+                    <input type="number" id="max_urls" value="1000" min="1" max="10000">
+                    <small>Maximum URLs to crawl</small>
+                </div>
+            </div>
+
+            <button id="start-btn" class="btn btn-primary">Start Crawling</button>
+        </div>
+
+        <div id="progress-section" class="progress-section" style="display: none;">
+            <h2>Crawling Progress</h2>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="total-found">0</div>
+                    <div class="stat-label">Valid URLs Found</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-value" id="total-visited">0</div>
+                    <div class="stat-label">URLs Visited</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-value" id="elapsed-time">0s</div>
+                    <div class="stat-label">Elapsed Time</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-value" id="urls-per-second">0</div>
+                    <div class="stat-label">URLs/Second</div>
+                </div>
+            </div>
+
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+
+            <div class="status-info">
+                <div class="status-item">
+                    <span class="label">Queue Size:</span>
+                    <span class="value" id="queue-size">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Failed URLs:</span>
+                    <span class="value" id="total-failed">0</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Status:</span>
+                    <span class="value status" id="status">Ready</span>
+                </div>
+            </div>
+
+            <div id="complete-section" style="display: none;">
+                <h3>✅ Crawling Complete!</h3>
+                <div class="action-buttons">
+                    <button id="download-sitemap-btn" class="btn btn-success">Download Sitemap (XML)</button>
+                    <button id="view-urls-btn" class="btn btn-secondary">View All URLs</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="urls-section" class="urls-section" style="display: none;">
+            <h2>Found URLs (<span id="url-count">0</span>)</h2>
+            <div class="search-box">
+                <input type="text" id="url-search" placeholder="Search URLs...">
+            </div>
+            <div id="urls-list" class="urls-list"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentSessionId = null;
+
+        const startBtn = document.getElementById('start-btn');
+        const progressSection = document.getElementById('progress-section');
+        const completeSection = document.getElementById('complete-section');
+        const urlsSection = document.getElementById('urls-section');
+
+        startBtn.addEventListener('click', startCrawl);
+
+        async function startCrawl() {
+            const url = document.getElementById('url').value.trim();
+            const maxDepth = document.getElementById('max_depth').value;
+            const maxUrls = document.getElementById('max_urls').value;
+
+            if (!url) {
+                alert('Please enter a URL');
+                return;
+            }
+
+            // Reset UI
+            progressSection.style.display = 'block';
+            completeSection.style.display = 'none';
+            urlsSection.style.display = 'none';
+            startBtn.disabled = true;
+            startBtn.textContent = 'Crawling...';
+
+            try {
+                const response = await fetch('/start-crawl', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        url: url,
+                        max_depth: maxDepth,
+                        max_urls: maxUrls
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert(data.error);
+                    resetUI();
+                    return;
+                }
+
+                currentSessionId = data.session_id;
+                document.getElementById('status').textContent = 'Crawling...';
+
+            } catch (error) {
+                alert('Error starting crawl: ' + error.message);
+                resetUI();
+            }
+        }
+
+        socket.on('crawl_progress', (data) => {
+            document.getElementById('total-found').textContent = data.total_found;
+            document.getElementById('total-visited').textContent = data.total_visited;
+            document.getElementById('total-failed').textContent = data.total_failed;
+            document.getElementById('queue-size').textContent = data.queue_size;
+            document.getElementById('elapsed-time').textContent = data.elapsed_time + 's';
+            document.getElementById('urls-per-second').textContent = data.urls_per_second;
+            
+            // Update progress bar
+            const maxUrls = parseInt(document.getElementById('max_urls').value);
+            const progress = Math.min((data.total_found / maxUrls) * 100, 100);
+            document.getElementById('progress-bar').style.width = progress + '%';
+        });
+
+        socket.on('crawl_complete', (data) => {
+            document.getElementById('status').textContent = 'Complete ✓';
+            document.getElementById('status').style.color = '#10b981';
+            completeSection.style.display = 'block';
+            resetUI();
+        });
+
+        document.getElementById('download-sitemap-btn').addEventListener('click', () => {
+            if (currentSessionId) {
+                window.location.href = `/download-sitemap/${currentSessionId}`;
+            }
+        });
+
+        document.getElementById('view-urls-btn').addEventListener('click', async () => {
+            if (!currentSessionId) return;
+
+            try {
+                const response = await fetch(`/get-urls/${currentSessionId}`);
+                const data = await response.json();
+                
+                displayUrls(data.urls);
+                urlsSection.style.display = 'block';
+                document.getElementById('url-count').textContent = data.total;
+
+            } catch (error) {
+                alert('Error fetching URLs: ' + error.message);
+            }
+        });
+
+        document.getElementById('url-search').addEventListener('input', (e) => {
+            const searchTerm = e.target.value.toLowerCase();
+            const urlItems = document.querySelectorAll('.url-item');
+            
+            urlItems.forEach(item => {
+                const url = item.textContent.toLowerCase();
+                item.style.display = url.includes(searchTerm) ? 'block' : 'none';
+            });
+        });
+
+        function displayUrls(urls) {
+            const urlsList = document.getElementById('urls-list');
+            urlsList.innerHTML = '';
+            
+            urls.forEach(url => {
+                const div = document.createElement('div');
+                div.className = 'url-item';
+                div.innerHTML = `
+                    <a href="${url}" target="_blank">${url}</a>
+                `;
+                urlsList.appendChild(div);
+            });
+        }
+
+        function resetUI() {
+            startBtn.disabled = false;
+            startBtn.textContent = 'Start Crawling';
+        }
+    </script>
+</body>
+</html>
